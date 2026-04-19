@@ -1,0 +1,1 @@
+Making an agentic ai system that will tell me about jobs from n number of company's career pages. So, i dont miss the oppurtunity at the right time :)
