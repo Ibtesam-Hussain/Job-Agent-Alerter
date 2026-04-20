@@ -1,0 +1,1 @@
+a db in which agent response and user present/history data will be maintained
