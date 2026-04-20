@@ -1,0 +1,33 @@
+BROAD_KEYWORDS = [
+    # Core engineering
+    "engineer", "developer", "software", "programmer", "coding",
+
+    # Web / app dev
+    "backend", "frontend", "fullstack", "full stack", "web", "mobile",
+
+    # Data / AI
+    "data", "ai", "ml", "machine learning", "deep learning",
+    "artificial intelligence", "nlp", "computer vision",
+
+    # Systems / infra
+    "devops", "cloud", "infrastructure", "platform", "site reliability", "sre",
+
+    # Security
+    "security", "cybersecurity", "infosec", "application security",
+
+    # Databases
+    "database", "sql", "nosql", "data engineer", "data pipeline",
+
+    # Testing / quality
+    "qa", "test", "automation", "quality assurance",
+
+    # Tools / frameworks (broad signals)
+    "python", "java", "javascript", "typescript", "c++", "golang",
+    "react", "node", "django", "flask", "spring",
+
+    # Entry-level signals
+    "intern", "trainee", "associate", "junior",
+
+    # Misc tech roles
+    "systems", "embedded", "firmware", "blockchain", "consultant"
+]
