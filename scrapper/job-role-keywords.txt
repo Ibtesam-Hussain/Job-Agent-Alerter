@@ -29,5 +29,5 @@ BROAD_KEYWORDS = [
     "intern", "trainee", "associate", "junior",
 
     # Misc tech roles
-    "systems", "embedded", "firmware", "blockchain", "consultant"
+    "systems", "embedded", "firmware", "blockchain", "consultant", "manager"
 ]

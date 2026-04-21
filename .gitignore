@@ -1,2 +1,4 @@
 project-plan.txt
 __pycache__/
+*exe
+scrapped_jobs.db
