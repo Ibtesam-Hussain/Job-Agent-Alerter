@@ -13,4 +13,17 @@ The following steps have been implemented:
 7. Configuration Management - Support for default and user-defined job sites
 8. Modular Architecture - Clean separation into 7 focused modules with main.py as single entry point
 
+## Database Integration Added
+
+SQLite database integration with deduplication functionality:
+
+- Database file: `memory/scrapped_jobs.db`
+- Table schema: jobs (id, title, apply_link UNIQUE, source, status, created_at)
+- Functions: init_db(), is_job_exists(), insert_job(), filter_new_jobs()
+- Pipeline integration: Only new jobs proceed to output, duplicates are filtered out
+- Although, all the scrapped + filtered job (via generic keywords) will remain stored in db
+- Just for LLM, only new jobs will go to it which will be cost effective for us.
+- Automatic insertion of new jobs with status tracking
+
 Usage: python main.py [--save-json OUTPUT_FILE]
+
