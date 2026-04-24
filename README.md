@@ -17,7 +17,7 @@ The following steps have been implemented:
 
 SQLite database integration with deduplication functionality:
 
-- Database file: `memory/scrapped_jobs.db`
+- Database file: `memory/jobs.db`
 - Table schema: jobs (id, title, apply_link UNIQUE, source, status, created_at)
 - Functions: init_db(), is_job_exists(), insert_job(), filter_new_jobs()
 - Pipeline integration: Only new jobs proceed to output, duplicates are filtered out
