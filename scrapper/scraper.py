@@ -93,16 +93,27 @@ def scrape_site(page, site):
         return []
 
 
-def run_scraper():
-    """Run the complete scraping process across all configured sites."""
+def run_scraper(return_page=False):
+    """
+    Run the complete scraping process across all configured sites.
+    
+    Args:
+        return_page: If True, returns (jobs, page, browser, playwright) tuple for further processing
+                   If False, returns just jobs and auto-closes browser
+    
+    Returns:
+        If return_page=False: List of job dictionaries
+        If return_page=True: Tuple of (jobs, page, browser, playwright)
+    """
     # Combine default sites with user-added sites
     user_sites = load_user_sites()
     all_sites = DEFAULT_SITES + user_sites
 
     all_jobs = []
 
-    with sync_playwright() as p:
-        # Launch browser with more permissive settings
+    if return_page:
+        # Don't use context manager - keep browser alive for detail page extraction
+        p = sync_playwright().start()
         browser = p.chromium.launch(
             headless=True,
             args=[
@@ -124,6 +135,38 @@ def run_scraper():
             except Exception as e:
                 print(f"Error with {site['name']}: {e}")
 
-        browser.close()
+        return all_jobs, page, browser, p
+    else:
+        with sync_playwright() as p:
+            # Launch browser with more permissive settings
+            browser = p.chromium.launch(
+                headless=True,
+                args=[
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-accelerated-2d-canvas',
+                    '--no-first-run',
+                    '--no-zygote',
+                    '--disable-gpu'
+                ]
+            )
+            page = browser.new_page()
 
-    return all_jobs
+            for site in all_sites:
+                try:
+                    jobs = scrape_site(page, site)
+                    all_jobs.extend(jobs)
+                except Exception as e:
+                    print(f"Error with {site['name']}: {e}")
+
+            browser.close()
+
+        return all_jobs
+    
+
+if __name__ == "__main__":
+    print("Starting scraper...")
+    jobs = run_scraper()
+    print(f"Scraping complete. Total jobs collected: {len(jobs)}")
+    
