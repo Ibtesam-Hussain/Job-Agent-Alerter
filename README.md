@@ -27,3 +27,40 @@ SQLite database integration with deduplication functionality:
 
 Usage: python main.py [--save-json OUTPUT_FILE]
 
+## LLM Integration Added
+
+OpenRouter API integration for intelligent job filtering:
+
+- Decision Engine: `agent/decision_engine.py` - Uses gpt-oss-120b:free model
+- LLM Filtering: Scores jobs 0-10 based on user preferences
+- Rate Limit Handling: Automatic fallback to pass-through mode when rate limited
+- User Preferences: Stored in `memory/user_preferences.db` table (user_preferences)
+- Preferences include: roles, tech, keywords, exclude, experience_level
+- Functions: get_preferences_from_db(), filter_jobs_with_llm()
+
+## Database Architecture Refactored
+
+Clean separation with two tables in `memory/jobs.db`:
+
+### scraped_jobs table
+- Stores ALL scraped jobs for deduplication
+- Schema: id, title, apply_link UNIQUE, snippet, source, status, created_at
+- Functions: insert_scraped_jobs(), get_new_jobs()
+
+### selected_jobs table
+- Stores ONLY LLM-selected relevant jobs (final output)
+- Schema: id, title, apply_link UNIQUE, snippet, score, reason, alerted, created_at
+- Functions: insert_selected_jobs(), get_selected_jobs(), mark_alerted()
+
+Pipeline: scraped_jobs → get_new_jobs() → LLM → selected_jobs
+
+## Agent Orchestration
+
+Main agent loop in `agent/agent_loop.py`:
+
+- 5-stage pipeline: SCRAPING → FILTERING → EXTRACTING → SAVING → LLM
+- Preferences loaded from user_preferences.db automatically
+- Rate limit protection: skips DB save when LLM unavailable
+- Snippet preservation: snippets carried through from scraped to selected jobs
+- Run modes: python agent/agent_loop.py (single) or python main.py --agent --loop
+
