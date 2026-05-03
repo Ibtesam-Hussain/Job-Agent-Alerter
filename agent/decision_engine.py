@@ -1,10 +1,15 @@
 """
 Decision engine using OpenAI API to filter relevant jobs based on user preferences.
+
+Note:
+- Preferred source for preferences is `config/user_preferences.json`.
+- DB-based preference loading is deprecated and retained only for legacy compatibility.
 """
 
 import json
 import os
 import sys
+import warnings
 from dotenv import load_dotenv
 from openai import OpenAI
 
@@ -33,12 +38,22 @@ DEFAULT_PREFERENCES = {
 
 def get_preferences_from_db():
     """
+    DEPRECATED: load preferences from SQLite.
+
+    Prefer loading preferences from `config/user_preferences.json` and passing
+    them into `filter_jobs_with_llm(..., preferences=...)`.
+
     Get user preferences from the database.
     Falls back to DEFAULT_PREFERENCES if DB is empty or unavailable.
     
     Returns:
         dict: User preferences
     """
+    warnings.warn(
+        "get_preferences_from_db() is deprecated. Use JSON config preferences instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     try:
         conn = get_user_pref_connection()
         init_user_pref_db(conn)
@@ -56,8 +71,9 @@ def filter_jobs_with_llm(jobs, preferences=None):
     
     Args:
         jobs: List of job dictionaries with title, apply_link, source
-        preferences: Dict with roles, tech, exclude keys (optional)
-                     If None, loads from user_preferences.db
+        preferences: Dict with roles, tech, exclude keys (optional).
+                     Preferred source is config/user_preferences.json.
+                     If None, loads from user_preferences.db (deprecated fallback).
     
     Returns:
         List of filtered jobs with score >= 7

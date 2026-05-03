@@ -1,252 +1,112 @@
 """
-Agent orchestration layer - the brain of the job monitoring system.
-Coordinates scraping, database, and LLM decision engine.
+Reusable business logic for LLM decisioning + alert dispatch.
+No direct process entrypoint is defined in this module.
 """
 
+from __future__ import annotations
+
+from pathlib import Path
 import sys
-import os
-import time
-import json
 
-# Add project directories to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'scrapper'))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'memory'))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'agent'))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'notifier'))
+BASE_DIR = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(BASE_DIR / "memory"))
+sys.path.insert(0, str(BASE_DIR / "notifier"))
 
-from scraper import run_scraper
-from job_filter import filter_snippets_by_title
-from job_extractor import extract_job_details
-from memory.job_database import (
-    init_db,
-    insert_scraped_jobs,
-    get_new_jobs,
-    insert_selected_jobs,
-    get_scraped_jobs_count,
-    get_selected_jobs_count
-)
-from memory.user_pref_database import (
-    get_connection as get_user_pref_connection,
-    init_user_pref_db,
-    get_preferences_with_default
-)
-from decision_engine import filter_jobs_with_llm, get_preferences_from_db
+from agent.decision_engine import filter_jobs_with_llm
+from memory.job_database import insert_selected_jobs
 from notifier.alert_service import send_job_alerts as notifier_send_job_alerts
+from utils.logger import get_logger
 
 
-def run_agent(conn, preferences=None):
+def _build_llm_preferences(preferences: dict) -> dict:
     """
-    Main agent function that orchestrates the job monitoring pipeline.
-    
+    Normalize JSON preferences to decision_engine expected format.
+    """
+    target_roles = preferences.get("target_roles") or preferences.get("roles") or []
+    skills = preferences.get("skills") or preferences.get("tech") or []
+    exclude = preferences.get("exclude") or []
+    return {
+        "roles": target_roles,
+        "tech": skills,
+        "exclude": exclude,
+    }
+
+
+def _apply_min_match_score(jobs: list, min_score: int) -> list:
+    selected = []
+    for job in jobs:
+        score = job.get("score", 0)
+        if isinstance(score, (int, float)) and score >= min_score:
+            selected.append(job)
+    return selected
+
+
+def run_agent_decision(new_jobs: list, preferences: dict) -> list:
+    """
+    Run LLM decisioning over unseen jobs.
+
     Args:
-        conn: SQLite database connection
-        preferences: Optional user preferences for LLM filtering
-    
+        new_jobs: Jobs that have not yet reached selected_jobs table.
+        preferences: JSON-based preferences loaded from config.
+
     Returns:
-        List of relevant jobs found (score >= 7)
+        LLM selected jobs with snippet/apply_link normalized.
     """
-    print("\n" + "=" * 60)
-    print("Starting Agent Cycle")
-    print("=" * 60)
-    
-    # Stage 1: Scraping (keep page open for detail page extraction)
-    print("\n[1/5] SCRAPING: Fetching jobs from configured sites...")
-    jobs, page, browser, playwright = run_scraper(return_page=True)
-    print(f"      Total HTML snippets found: {len(jobs)}")
-    
-    if not jobs:
-        print("No jobs found during scraping.")
-        browser.close()
-        playwright.stop()
-        return []
-    
-    # Stage 2: Keyword Filtering
-    print("\n[2/5] FILTERING: Applying keyword filters...")
-    filtered_jobs = filter_snippets_by_title(jobs)
-    print(f"      Jobs after keyword filter: {len(filtered_jobs)}")
-    
-    if not filtered_jobs:
-        print("No jobs matched the keyword filter.")
-        return []
-    
-    # Stage 3: Extract Details (with page for detail page fallback)
-    print("\n[3/5] EXTRACTING: Extracting job details...")
-    job_details = extract_job_details(filtered_jobs, page=page, base_url="")
-    print(f"      Job details extracted: {len(job_details)}")
-
-    # Close browser and stop playwright properly
-    browser.close()
-    playwright.stop()
-    
-    # Stage 4: Insert ALL scraped jobs into scraped_jobs table
-    print("\n[4/5] SAVING: Inserting all scraped jobs into database...")
-    insert_scraped_jobs(conn, job_details)
-    
-    # Get new jobs (not already in selected_jobs) for LLM processing
-    new_jobs = get_new_jobs(conn)
-    print(f"      New jobs for LLM: {len(new_jobs)}")
-    
+    logger = get_logger()
     if not new_jobs:
-        print("\nNo new jobs found. All scraped jobs already processed.")
         return []
-    
-    # Stage 5: LLM Decision Engine (only if preferences provided)
-    if preferences:
-        print("\n[5/5] LLM PROCESSING: Analyzing jobs with AI...")
-        relevant_jobs = filter_jobs_with_llm(new_jobs, preferences)
-        print(f"      Relevant jobs (score >= 7): {len(relevant_jobs)}")
-        
-        if not relevant_jobs:
-            print("No jobs matched user preferences.")
-            print("\n" + "=" * 60)
-            print("Agent Cycle Complete")
-            print("=" * 60)
-            return []
-        
-        # Check if rate-limited (don't save to DB on rate limit)
-        is_rate_limited = any('Rate limited' in job.get('reason', '') for job in relevant_jobs)
-        if is_rate_limited:
-            print("[LLM] Rate limited - skipping DB save, only showing in console")
-            # Still return jobs for console display but don't save to DB
-            return relevant_jobs
-        
-        # Preserve snippet from original new_jobs
-        for job in relevant_jobs:
-            link = job.get('apply_link', job.get('link', ''))
-            for original_job in new_jobs:
-                if original_job.get('apply_link') == link or original_job.get('link') == link:
-                    job['snippet'] = original_job.get('snippet', '')
-                    break
-        
-        # Insert selected jobs into selected_jobs table
-        insert_selected_jobs(conn, relevant_jobs)
-    else:
-        # No preferences - use all new jobs (standalone mode)
-        print("\n[5/5] STANDALONE MODE: No LLM filtering, using all new jobs...")
-        relevant_jobs = new_jobs
-        print(f"      New jobs to process: {len(relevant_jobs)}")
-        
-        # Insert as selected jobs (with default score)
-        for job in relevant_jobs:
-            job['score'] = 10
-            job['reason'] = 'Manual (no LLM filtering)'
-        insert_selected_jobs(conn, relevant_jobs)
-    
-    # Print alert messages for new relevant jobs
-    print("\n" + "=" * 60)
-    print("NEW JOB ALERTS")
-    print("=" * 60)
-    for job in relevant_jobs:
-        print(f"\n>>> NEW JOB: {job.get('title', 'Unknown')}")
-        print(f"    Link: {job.get('link', job.get('apply_link', 'N/A'))}")
-        if preferences and 'score' in job:
-            print(f"    Score: {job.get('score', 'N/A')}/10")
-            print(f"    Reason: {job.get('reason', 'No reason provided')}")
-        else:
-            print(f"    Source: {job.get('source', 'N/A')}")
-    
-    
 
-    # Send WhatsApp alerts for newly selected jobs and report status
-    alert_summary = send_job_alerts(conn)
-    print(f"[WHATSAPP] Alert delivery complete: {alert_summary['success']} sent, {alert_summary['failed']} failed, {alert_summary['total']} total")
-    
-    print("\n" + "=" * 60)
-    print("Agent Cycle Complete")
-    print("=" * 60)
+    llm_preferences = _build_llm_preferences(preferences)
+    min_score = int(preferences.get("min_match_score", 7))
+    llm_jobs = filter_jobs_with_llm(new_jobs, llm_preferences)
+    logger.info("[LLM] Decision engine returned %s candidate jobs", len(llm_jobs))
+
+    selected_jobs = _apply_min_match_score(llm_jobs, min_score)
+
+    # Preserve snippet + apply_link from original job payload.
+    lookup = {job.get("apply_link", ""): job for job in new_jobs if job.get("apply_link")}
+    for job in selected_jobs:
+        link = job.get("apply_link") or job.get("link", "")
+        if "apply_link" not in job:
+            job["apply_link"] = link
+        original = lookup.get(link)
+        if original:
+            job["snippet"] = original.get("snippet", "")
+            job["source"] = original.get("source", "")
+
+    logger.info("[LLM] Selected %s job(s) with min score %s", len(selected_jobs), min_score)
+    return selected_jobs
 
 
-    return relevant_jobs
-
-
-def start_agent(conn, interval=86400, preferences=None):
+def persist_selected_jobs(conn, jobs: list) -> int:
     """
-    Start the agent in a continuous loop.
-    
-    Args:
-        conn: SQLite database connection
-        interval: Sleep interval in seconds (default 24 hours = 86400)
-        preferences: Optional user preferences for LLM filtering
-    
-    Note:
-        - Press Ctrl+C to stop the agent
-        - Each cycle runs the full pipeline: scrape -> filter -> dedupe -> LLM -> save
+    Persist LLM-selected jobs to selected_jobs table.
+    Skips DB writes when decisions are rate-limit fallback results.
     """
-    print("\n" + "=" * 60)
-    print("JOB AGENT STARTED")
-    print("=" * 60)
-    print(f"Running interval: {interval} seconds ({interval // 3600} hours)")
-    print("Press Ctrl+C to stop")
-    print("=" * 60)
-    
-    cycle_count = 0
-    
-    try:
-        while True:
-            cycle_count += 1
-            print(f"\n\n>>> CYCLE #{cycle_count} <<<")
-            
-            try:
-                run_agent(conn, preferences)
-            except Exception as e:
-                print(f"Error in agent cycle: {e}")
-                import traceback
-                traceback.print_exc()
-            
-            print(f"\nSleeping for {interval} seconds...")
-            time.sleep(interval)
-    
-    except KeyboardInterrupt:
-        print("\n\nAgent stopped by user.")
-        print(f"Total cycles completed: {cycle_count}")
+    logger = get_logger()
+    if not jobs:
+        return 0
+
+    is_rate_limited = any("Rate limited" in str(job.get("reason", "")) for job in jobs)
+    if is_rate_limited:
+        logger.error("[ERROR] LLM rate limited, skipping selected_jobs write for this cycle")
+        return 0
+
+    inserted_count = insert_selected_jobs(conn, jobs)
+    return inserted_count
 
 
-def send_job_alerts(conn):
+def send_job_alerts(conn) -> dict:
     """
-    Send WhatsApp job alerts for unalerted selected jobs.
+    Send WhatsApp alerts for unalerted jobs and return summary.
     """
-    print("\n[ALERT] Starting WhatsApp alert delivery...")
-    alert_result = notifier_send_job_alerts(conn)
-    print(f"[ALERT] Summary: total={alert_result['total']}, success={alert_result['success']}, failed={alert_result['failed']}")
-    return alert_result
-
-
-# Default user preferences (loaded from DB, with fallback)
-def get_default_preferences():
-    """Get preferences from database or return defaults."""
-    try:
-        pref_conn = get_user_pref_connection()
-        init_user_pref_db(pref_conn)
-        prefs = get_preferences_with_default(pref_conn)
-        pref_conn.close()
-        print(f"[PREFERENCES] Loaded from DB: roles={prefs.get('roles', [])[:2]}...")
-        return prefs
-    except Exception as e:
-        print(f"[PREFERENCES] Using hardcoded defaults: {e}")
-        return {
-            "roles": ["qa", "automation", "test"],
-            "tech": ["selenium", "python", "api"],
-            "exclude": ["manual", "non-technical"]
-        }
-
-
-# Example usage
-if __name__ == "__main__":
-    # Initialize database
-    db_path = os.path.join(os.path.dirname(__file__), '..', 'memory', 'jobs.db')
-    conn = init_db(db_path)
-    
-    # Load preferences from DB
-    prefs = get_default_preferences()
-    
-    try:
-        # Run single agent cycle
-        print("Running single agent cycle (for testing)...")
-        results = run_agent(conn, prefs)
-        # print(f"\nFinal results: {len(results)} relevant jobs")
-        
-    finally:
-        conn.close()
-    
-    # To run continuous loop:
-    # start_agent(conn, interval=86400, preferences=get_default_preferences())
+    logger = get_logger()
+    logger.info("[ALERT] Triggering WhatsApp delivery for unalerted jobs")
+    result = notifier_send_job_alerts(conn)
+    logger.info(
+        "[ALERT] Delivery result total=%s success=%s failed=%s",
+        result["total"],
+        result["success"],
+        result["failed"],
+    )
+    return result
