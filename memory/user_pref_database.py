@@ -1,6 +1,8 @@
 """
-User preferences database module.
-Manages user preferences for LLM decision engine using SQLite.
+DEPRECATED: User preferences database module.
+
+This module is retained for legacy compatibility only.
+Active preference source is `config/user_preferences.json`.
 """
 
 import sqlite3
