@@ -12,6 +12,7 @@ import json
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'scrapper'))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'memory'))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'agent'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'notifier'))
 
 from scraper import run_scraper
 from job_filter import filter_snippets_by_title
@@ -30,6 +31,7 @@ from memory.user_pref_database import (
     get_preferences_with_default
 )
 from decision_engine import filter_jobs_with_llm, get_preferences_from_db
+from notifier.alert_service import send_job_alerts as notifier_send_job_alerts
 
 
 def run_agent(conn, preferences=None):
@@ -96,6 +98,9 @@ def run_agent(conn, preferences=None):
         
         if not relevant_jobs:
             print("No jobs matched user preferences.")
+            print("\n" + "=" * 60)
+            print("Agent Cycle Complete")
+            print("=" * 60)
             return []
         
         # Check if rate-limited (don't save to DB on rate limit)
@@ -140,10 +145,17 @@ def run_agent(conn, preferences=None):
         else:
             print(f"    Source: {job.get('source', 'N/A')}")
     
+    
+
+    # Send WhatsApp alerts for newly selected jobs and report status
+    alert_summary = send_job_alerts(conn)
+    print(f"[WHATSAPP] Alert delivery complete: {alert_summary['success']} sent, {alert_summary['failed']} failed, {alert_summary['total']} total")
+    
     print("\n" + "=" * 60)
     print("Agent Cycle Complete")
     print("=" * 60)
-    
+
+
     return relevant_jobs
 
 
@@ -187,6 +199,16 @@ def start_agent(conn, interval=86400, preferences=None):
     except KeyboardInterrupt:
         print("\n\nAgent stopped by user.")
         print(f"Total cycles completed: {cycle_count}")
+
+
+def send_job_alerts(conn):
+    """
+    Send WhatsApp job alerts for unalerted selected jobs.
+    """
+    print("\n[ALERT] Starting WhatsApp alert delivery...")
+    alert_result = notifier_send_job_alerts(conn)
+    print(f"[ALERT] Summary: total={alert_result['total']}, success={alert_result['success']}, failed={alert_result['failed']}")
+    return alert_result
 
 
 # Default user preferences (loaded from DB, with fallback)
