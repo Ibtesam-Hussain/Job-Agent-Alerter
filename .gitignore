@@ -4,3 +4,6 @@ __pycache__/
 jobs.db
 .env
 user_preferences.db
+logs/*.log
+logs/*.log.*
+config/user_preferences.json
