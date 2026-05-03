@@ -1,0 +1,28 @@
+{
+    "__comment": "Your preferences for the job agent",
+    "user_name": "Your Name",
+    "target_roles": [
+      "QA Engineer",
+      "SQA Engineer",
+      "Automation Tester",
+      "Software Engineer"
+    ],
+    "skills": [
+      "selenium",
+      "python",
+      "postman",
+      "api testing",
+      "sql"
+    ],
+    "work_mode": [
+      "remote",
+      "hybrid",
+      "onsite"
+    ],
+    "locations": [
+      "Your City",
+      "Remote"
+    ],
+    "experience_level": "entry-mid",
+    "min_match_score": 7
+  }
