@@ -8,6 +8,12 @@ import os
 from datetime import datetime
 
 
+def _table_has_column(conn, table: str, column: str) -> bool:
+    cursor = conn.cursor()
+    cursor.execute(f"PRAGMA table_info({table})")
+    return any(row[1] == column for row in cursor.fetchall())
+
+
 def init_db(db_path="jobs.db"):
     """
     Initialize the database and create both tables if they don't exist.
@@ -30,6 +36,7 @@ def init_db(db_path="jobs.db"):
             snippet TEXT,
             source TEXT NOT NULL,
             status TEXT DEFAULT 'seen',
+            llm_processed INTEGER DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
@@ -49,6 +56,20 @@ def init_db(db_path="jobs.db"):
     ''')
 
     conn.commit()
+
+    # Migrate older DBs that predate llm_processed tracking
+    if not _table_has_column(conn, "scraped_jobs", "llm_processed"):
+        cursor.execute("ALTER TABLE scraped_jobs ADD COLUMN llm_processed INTEGER DEFAULT 0")
+        conn.commit()
+
+    # Backfill: anything already selected should not be re-sent to the LLM
+    cursor.execute('''
+        UPDATE scraped_jobs
+        SET llm_processed = 1
+        WHERE apply_link IN (SELECT apply_link FROM selected_jobs)
+    ''')
+    conn.commit()
+
     return conn
 
 
@@ -70,14 +91,15 @@ def insert_scraped_jobs(conn, jobs):
     for job in jobs:
         try:
             cursor.execute('''
-                INSERT OR IGNORE INTO scraped_jobs (title, apply_link, snippet, source, status)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT OR IGNORE INTO scraped_jobs (title, apply_link, snippet, source, status, llm_processed)
+                VALUES (?, ?, ?, ?, ?, ?)
             ''', (
                 job.get('title', ''),
                 job.get('apply_link', job.get('link', '')),
                 job.get('snippet', ''),
                 job.get('source', ''),
-                job.get('status', 'seen')
+                job.get('status', 'seen'),
+                int(job.get('llm_processed', 0) or 0),
             ))
             if cursor.rowcount > 0:
                 inserted_count += 1
@@ -91,8 +113,8 @@ def insert_scraped_jobs(conn, jobs):
 
 def get_new_jobs(conn):
     """
-    Get jobs from scraped_jobs that are NOT already in selected_jobs.
-    This ensures only unseen jobs go to LLM for filtering.
+    Get jobs from scraped_jobs that have not been processed by the LLM yet.
+    This prevents rejected/non-selected scraped jobs from being re-sent every cycle.
     Includes snippet from scraped_jobs.
     
     Args:
@@ -103,14 +125,12 @@ def get_new_jobs(conn):
     """
     cursor = conn.cursor()
     
-    # Get jobs from scraped_jobs that don't exist in selected_jobs
     cursor.execute('''
         SELECT s.id, s.title, s.apply_link, s.snippet, s.source, s.created_at
         FROM scraped_jobs s
-        WHERE NOT EXISTS (
-            SELECT 1 FROM selected_jobs c 
-            WHERE c.apply_link = s.apply_link
-        )
+        WHERE (s.llm_processed IS NULL OR s.llm_processed = 0)
+          AND s.apply_link IS NOT NULL
+          AND TRIM(s.apply_link) != ''
         ORDER BY s.created_at DESC
     ''')
     
@@ -128,6 +148,35 @@ def get_new_jobs(conn):
     
     print(f"[DB] New jobs for LLM: {len(jobs)}")
     return jobs
+
+
+def mark_scraped_jobs_llm_processed(conn, jobs):
+    """
+    Mark scraped_jobs rows as processed by the LLM for the given job dicts.
+    Uses apply_link as the key.
+    """
+    cursor = conn.cursor()
+    links = []
+    for job in jobs or []:
+        link = job.get("apply_link") or job.get("link") or ""
+        link = (link or "").strip()
+        if link:
+            links.append(link)
+
+    if not links:
+        return 0
+
+    placeholders = ",".join(["?"] * len(links))
+    cursor.execute(
+        f'''
+        UPDATE scraped_jobs
+        SET llm_processed = 1
+        WHERE apply_link IN ({placeholders})
+        ''',
+        links,
+    )
+    conn.commit()
+    return cursor.rowcount
 
 
 def insert_selected_jobs(conn, jobs):
