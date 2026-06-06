@@ -109,7 +109,7 @@ User Preferences (user_preferences.json)
 ```
 
 The pipeline is **incremental** — only newly observed jobs are processed each run, keeping LLM token usage and cost minimal.
-
+To view more detailed architecture. Please refer to `docs/indepth-sys-architecture.png`
 ---
 
 ## ⚡ Quickstart
