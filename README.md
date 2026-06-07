@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/banner.png" alt="JobAgent Banner" width="100%" />
+<img src="docs/banner.png" alt="JobAgent Banner" width="100%" />
 
 <h1>JobAgent</h1>
 
